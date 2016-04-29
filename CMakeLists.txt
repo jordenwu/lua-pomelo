@@ -99,6 +99,8 @@ else()
   set_target_properties(pomelo PROPERTIES OUTPUT_NAME "luapomelo")
 endif()
 
+target_compile_features(pomelo PRIVATE cxx_auto_type cxx_range_for cxx_nullptr)
+
 if (LINK_FLAGS)
   set_target_properties(pomelo PROPERTIES LINK_FLAGS ${LINK_FLAGS})
 endif()

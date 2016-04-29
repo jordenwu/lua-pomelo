@@ -107,58 +107,45 @@ Update options for the libpomelo2.
 
 Follow fields for `opts` are supported:
 
+Global options:
+
 * `.log`: string, the log level for the libpomelo2.
 * `.cafile`: string, path to CA file.
 * `.capath`: string, path to CA directory.
+
+Client options:
+
+* `.conn_timeout`: optional, default 30 seconds
+* `.enable_reconn`: optional, default true
+* `.reconn_max_retry`: optional, 'ALWAYS' or a positive integer. default 'ALWAYS'
+* `.reconn_delay`: optional, default to 2
+* `.reconn_delay_max`: default to 30
+* `.reconn_exp_backoff`: optional, default to true
+* `.transport_name`: one of 'TCP', 'TLS', 'DUMMY', or an integer id of you customized transport
 
 ```Lua
 pomelo.configure({
   log='WARN', -- log level, optional, one of 'DEBUG', 'INFO', 'WARN', 'ERROR', 'DISABLE', default to 'DISABLE'
   cafile = 'path/to/ca/file', -- optional
   capath = 'path/to/ca/path', -- optional
+
+  conn_timeout = 30, -- optional, default 30 seconds
+  enable_reconn = true, -- optional, default true
+  reconn_max_retry = 'ALWAYS', -- optional, 'ALWAYS' or a positive integer. default 'ALWAYS'
+  reconn_delay = 2, -- integer, optional, default to 2
+  reconn_delay_max = 30, -- integer, optional, default to 30
+  reconn_exp_backoff = true,-- boolean, optional, default to true
+  transport_name = "TCP" -- 'TCP', 'TLS', 'DUMMY', or an integer id of you customized transport
 })
 ```
 
-Note: The ca setting code under hood is:
-
-
-```c
-if (ca_file || ca_path) {
-    tr_uv_tls_set_ca_file(ca_file, ca_path);
-}
-```
-
-If you don't provide `cafile` and `capath`, the `cafile` and `capath` are
+Note: Client options must set before first call to `pomelo.connect()`.
+Note:  If you don't provide `cafile` and `capath`, the `cafile` and `capath` are
 unchanged. If you provide provide one of them, the another one is set as NULL.
 
 **pomelo.version()**
 
 Returns the pomelo version string. The version string is `x.y.z-release`.
-
-
-**pomelo.newClient()**
-
-create a client.
-
-```Lua
-local opts =  {
-   conn_timeout = 30, -- optional, default 30 seconds
-   enable_reconn = true, -- optional, default true
-   reconn_max_retry = 'ALWAYS', -- optional, 'ALWAYS' or a positive integer. default 'ALWAYS'
-   reconn_delay = 2, -- integer, optional, default to 2
-   reconn_delay_max = 30, -- integer, optional, default to 30
-   reconn_exp_backoff = true,-- boolean, optional, default to true
-   transport_name = "TCP" -- 'TCP', 'TLS', 'DUMMY', or an integer id of you customized transport
-}
-local client = pomelo:newClient(opts)
-```
-
-Note: In Lua binding, unlike in c, all client in polling mode, that is setting
-`opts.enable_polling` has no effect.
-
-**pomelo.createClient**
-
-same as pomelo.newClient
 
 
 **pomelo.connect(host, port[, handshake_opts])**
@@ -173,24 +160,9 @@ Returns the new Client object.
 
 **pomelo.poll**
 
-Polls all clients at once.
+Polls pending events in current thread.
 
-This is preferred over `client:poll()`.
-
-### Client object
-
-**client:connect(host, port)**
-
-Connect to server.
-
-* host: server address.
-* port: server port.
-
-Returns true on success.
-Return nil and error information on error.
-
-
-**client:disconnect()**
+**pomelo.disconnect()**
 
 Disconnect form server.
 
@@ -198,7 +170,7 @@ Returns true on success.
 Return nil and error information on error.
 
 
-**client:request(route, message[, timeout], callback)**
+**pomelo.request(route, message[, timeout], callback)**
 
 Send a request `message` to server at specified `route` with optional `timeout`.
 When the server response received by client, the `callback` will be called  with `err` and `res`.
@@ -207,17 +179,15 @@ When the server response received by client, the `callback` will be called  with
 Returns true on success.
 Return nil and error information on error.
 
-**client:notify(route, message[, timeout][, callback])**
+**pomelo.notify(route, message[, timeout])**
 
 Send a notify `message` to server at specified `route`.
-And can optional specify `timeout` and `callback`.
-If specified, the `callback` will be called  with `err`.
-`err` is the err information if any or `nil` on success.
+And can optional specify `timeout`.
 
 Returns true on success.
 Return nil and error information on error.
 
-**client:on(event, listener)**
+**pomelo.on(event, listener)**
 
 Adds the `listener` function to the end of the listeners array for the specified
 `event`. No checks are made to see if the listener has already been added.
@@ -233,29 +203,29 @@ The events include:
 * for user defined push, the route is the event, and message is the event callback arg.
 
 ```Lua
-client:on('my.route', function(message)
+pomelo.on('server.module.method', function(message)
   print('got message form server.', message)
 end)
 ```
 
 Returns a reference to the `client` so calls can be chained.
 
-**client:addListener(event, listener)**
+**pomelo.addListener(event, listener)**
 
-Alias for `client:on(event, listener)`.
+Alias for `pomelo.on(event, listener)`.
 
-**client:once(event, listener)**
+**pomelo.once(event, listener)**
 
 adds a **one time** `listener` function for the `event`. This listener is invoked only the next time `event` is triggered, after which it is removed.
 
 ```Lua
-client:once('kicked', function()
+pomelo.once('kicked', function()
   print('kicked by server')
 end)
 ```
 Returns a reference to the `client` so calls can be chained.
 
-**client:off(event, listener)**
+**pomelo.off(event, listener)**
 
 Removes the specified `listener` from the listener array for the specified `event`.
 
@@ -263,47 +233,41 @@ Removes the specified `listener` from the listener array for the specified `even
 local function callback()
   print('Connected to server.')
 end
-client:on('connected', callback)
+pomelo.on('connected', callback)
 -- ...
-client:off('connected', callback)
+pomelo.off('connected', callback)
 ```
 
-`client:off` will remove, at most, one instance of a listener from the listener array.
+`pomelo.off` will remove, at most, one instance of a listener from the listener array.
 If any single listener has been added multiple times to the listener array for
-the specified event, then `client:off` must be called multiple times to remove
+the specified event, then `pomelo.off` must be called multiple times to remove
 each instance.
 
 Because listeners are managed using an internal array, calling this will change
 the position indices of any listener registered after the listener being removed.
 This will not impact the order in which listeners are called, but it will means
-that any copies of the listener array as returned by the `client:listeners()`
+that any copies of the listener array as returned by the `pomelo.listeners()`
 method will need to be recreated.
 
 Returns a reference to the `client` so calls can be chained.
 
-**client:removeListener(event, listener)**
+**pomelo.removeListener(event, listener)**
 
-Alias for `client:off(event, listener)`.
+Alias for `pomelo.off(event, listener)`.
 
-**client:listeners(event)**
+**pomelo.listeners(event)**
 
 Returns a copy of the array of listeners for the specified `event`.
 
-**client:config()**
-
-Return client options table, same values as passed to `pomelo.createClient()`
-
-**client:state()**
+**pomelo.state()**
 
 return client state, one of 'NOT_INITED','INITED','CONNECTING','CONNECTED','DISCONNECTING','UNKNOWN'
 
-**client:conn_quality()**
+**pomelo.conn_quality()**
 
-**client:connQuality()**
+**pomelo.connQuality()**
 
-same as client:conn_quality().
-
-**client:poll()**
+same as pomelo.conn_quality().
 
 
 ## Running Unit Tests
