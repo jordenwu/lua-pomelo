@@ -12,7 +12,7 @@ endif()
 option(BUILD_SHARED_LIBS "Build shared library" OFF)
 option(WITH_SHARED_LIBUV "Link to a shared libuv library instead of static linking" OFF)
 option(WITH_UV_TCP_TRANS "Link to a shared libuv library instead of static linking" ON)
-option(WITH_UV_TLS_TRANS "Link to a shared libuv library instead of static linking" ON)
+option(WITH_UV_TLS_TRANS "Link to a shared libuv library instead of static linking" OFF)
 set(BUILD_TESTS OFF CACHE BOOL "Build tests")
 
 if(UNIX)
