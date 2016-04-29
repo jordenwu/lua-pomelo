@@ -281,7 +281,7 @@ The the test server is running by pomelo. We can build using [luarocks](http://l
 2. Lua and [luarocks](https://github.com/keplerproject/luarocks/wiki/Download#installing) installed and available in you path.
 3. Install pomelo by running `npm install pomelo -g`
 4. Install busted via luarocks `luarocks install busted`
-5. in `deps/libpomelo2/test/game-server` run `nmp install`
+5. in `deps/libpomelo2/test/game-server` run `npm install`
 
 **Running tests**:
 

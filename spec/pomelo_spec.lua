@@ -7,7 +7,20 @@ pomelo.init({log='DISABLE'})
 describe('pomelo', function()
   before_each(function()
     pomelo.removeAllListeners()
-    pomelo.disconnect()
+
+    print('pomelo.state() is ',pomelo.state())
+    if pomelo.state() == 'CONNECTED' then
+      local wait = true
+      pomelo.once('disconnect',function()
+        wait = false
+      end)
+      pomelo.disconnect()
+
+      while wait do
+        pomelo.poll()
+        sleep(1)
+      end
+    end
   end)
   describe('.version()', function()
     it('returns the libpomelo2 version string', function()
@@ -52,10 +65,12 @@ describe('pomelo', function()
 
   describe('.request()', function()
     it('send request to pomelo server', function()
+      print('begin call request --')
       pomelo.connect('127.0.0.1', 3010)
       sleep(1)
       pomelo.poll()
-      local callback = spy.new(function()end)
+      local callcnt = 0
+      local callback = spy.new(function(err,msg)callcnt = callcnt + 1 print('callcnt is ',callcnt) print(err,msg) end)
       pomelo.request('connector.entryHandler.entry', '{"name": "test"}', 10, callback)
       sleep(2)
       pomelo.poll()
@@ -110,7 +125,9 @@ describe('pomelo', function()
       pomelo.connect('127.0.0.1', 3010)
       sleep(1)
       pomelo.poll()
-      local s = spy.new(function() end)
+
+      local timeout_test_cnt = 0
+      local s = spy.new(function() timeout_test_cnt = timeout_test_cnt + 1 print('timeout_test_cnt ',timeout_test_cnt)end)
       assert.has_no.errors(function()
         pomelo.notify('test.testHandler.notify', '{"content": "test content"}', 10)
       end)
@@ -162,9 +179,13 @@ describe('pomelo', function()
 
   describe('.off()', function()
     it('removes event listener', function()
-      local s = spy.new(function() end)
+      local s = spy.new(function() print('off function *********') end)
       pomelo.on('connect', s)
+
+      print('pre off ')
       pomelo.off('connect', s)
+
+      print('pre connect ')
       pomelo.connect('127.0.0.1', 3010)
       sleep(1)
       pomelo.poll()

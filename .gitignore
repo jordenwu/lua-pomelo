@@ -35,3 +35,5 @@
 /build
 /build.luarocks
 /.lua-version
+.tags
+.tags1

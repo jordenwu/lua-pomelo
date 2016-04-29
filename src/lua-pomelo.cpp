@@ -172,8 +172,9 @@ struct Signals {
         auto iter = events.find(event);
         if (iter == events.end())
             return;
-        auto listeners = iter->second;
+        std::vector<LuaCallback>& listeners = iter->second;
         listeners.erase(std::remove(listeners.begin(), listeners.end(), listener));
+        printf("event is %s,left listeners is %d \r\n",event.c_str(), listeners.size());
     }
     void clear() {
         std::lock_guard<std::mutex> lock(mutex);
@@ -184,7 +185,7 @@ struct Signals {
         return events[event];
     }
     void fire(const std::string& event, const std::vector<std::string>& args) {
-        
+
         std::vector<LuaCallback> copy;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -198,7 +199,7 @@ struct Signals {
         std::cout << "fire: " << event << " to " << copy.size() << " listeners with args:" << std::endl;
         for (const auto& a : args)
             std::cout << a << std::endl;
-        
+
         for (auto& h : copy) {
             h(args);
             if (h.once())
@@ -590,7 +591,11 @@ private:
     {
         int nargs = check_base(L);
         switch (nargs) {
-            case 3: return;
+            case 3:
+                callback = createLuaCallback(L, 3, 0);
+                if (!callback)
+                    timeout = luaL_checkinteger(L, 3);
+                break;
             case 4:
                 callback = createLuaCallback(L, 4, 0);
                 if (!callback)
