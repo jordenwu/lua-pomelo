@@ -10,16 +10,15 @@
 
 
 static int traceback(lua_State *L) {
-    // error at -1
-    lua_getglobal(L, "debug"); // [error, debug]
-    lua_getfield(L, -1, "traceback");// [error, debug, debug.traceback]
-
-    lua_remove(L,-2); // remove the 'debug'
-
-    lua_pushvalue(L, 1);
-    lua_pushinteger(L, 2);
-    lua_call(L, 2, 1);
+    int error = lua_gettop(L);
+    lua_getglobal(L, "debug");          // [error, debug]
+    lua_getfield(L, -1, "traceback");   // [error, debug, debug.traceback]
+    lua_remove(L,-2);                   // [error, debug.traceback]
+    lua_pushvalue(L, error);            // [error, debug.traceback, error]
+    lua_pushinteger(L, 2);              // [error, debug.traceback, error, 2]
+    lua_call(L, 2, 1);                  // [error, message]
     fprintf(stderr, "%s\n", lua_tostring(L, -1));
+    lua_settop(L, error);
     return 1;
 }
 

@@ -42,34 +42,55 @@ void pc_trans_fire_event(pc_client_t* client, int ev_type, const char* arg1, con
     pc_mutex_lock(&client->state_mutex);
     switch(ev_type) {
         case PC_EV_CONNECTED:
-            if (client->state == PC_ST_CONNECTING) return;
+            if (client->state != PC_ST_CONNECTING) {
+                pc_mutex_unlock(&client->state_mutex);
+                return;
+            }
             client->state = PC_ST_CONNECTED;
             break;
 
         case PC_EV_CONNECT_ERROR:
-            if (client->state != PC_ST_CONNECTING && client->state != PC_ST_DISCONNECTING) return;
+            if (client->state != PC_ST_CONNECTING && client->state != PC_ST_DISCONNECTING) {
+                pc_mutex_unlock(&client->state_mutex);
+                return;
+            }
+
             break;
 
         case PC_EV_CONNECT_FAILED:
-            if (client->state != PC_ST_CONNECTING && client->state != PC_ST_DISCONNECTING) return;
+            if (client->state != PC_ST_CONNECTING && client->state != PC_ST_DISCONNECTING) {
+                pc_mutex_unlock(&client->state_mutex);
+                return;
+            }
+
             client->state = PC_ST_INITED;
             break;
 
         case PC_EV_DISCONNECT:
-            if (client->state != PC_ST_DISCONNECTING) return;
+            if (client->state != PC_ST_DISCONNECTING) {
+                pc_mutex_unlock(&client->state_mutex);
+                return;
+            }
+
             client->state = PC_ST_INITED;
             break;
 
         case PC_EV_KICKED_BY_SERVER:
-            if (client->state != PC_ST_CONNECTED && client->state != PC_ST_DISCONNECTING) return;
+            if (client->state != PC_ST_CONNECTED && client->state != PC_ST_DISCONNECTING) {
+                pc_mutex_unlock(&client->state_mutex);
+                return;
+            }
+
             client->state = PC_ST_INITED;
             break;
 
         case PC_EV_UNEXPECTED_DISCONNECT:
         case PC_EV_PROTO_ERROR:
             if (client->state != PC_ST_CONNECTING && client->state != PC_ST_CONNECTED
-                    && client->state != PC_ST_DISCONNECTING)
+                && client->state != PC_ST_DISCONNECTING) {
+                pc_mutex_unlock(&client->state_mutex);
                 return;
+            }
             client->state = PC_ST_CONNECTING;
             break;
         case PC_EV_USER_DEFINED_PUSH:
@@ -79,6 +100,7 @@ void pc_trans_fire_event(pc_client_t* client, int ev_type, const char* arg1, con
         default:
             /* never run to here */
             pc_lib_log(PC_LOG_ERROR, "pc__trans_fire_event - unknown network event: %d", ev_type);
+            pc_mutex_unlock(&client->state_mutex);
             return;
     }
     pc_mutex_unlock(&client->state_mutex);

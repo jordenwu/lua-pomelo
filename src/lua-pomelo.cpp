@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <type_traits>
 #include <memory>
+#include <iostream>
 
 #include "pomelo.h"
 
@@ -33,7 +34,7 @@ static void push_rc_as_error(lua_State* L, int rc)
 
 struct LuaCallback {
     LuaCallback(): L(nullptr), ref_(LUA_NOREF) {}
-    ~LuaCallback() { unref();}
+    ~LuaCallback() { /* unref(); */}
     LuaCallback(lua_State* vm, int index, bool once = false) {
         set(vm, index, once);
     }
@@ -84,6 +85,7 @@ struct LuaCallback {
 
     void operator()(const std::vector<std::string>& args) { // event callback
         int top = lua_gettop(L);
+        push();
         for (const auto& arg : args) {
             lua_pushlstring(L, arg.data(), arg.size());
         }
@@ -94,6 +96,7 @@ struct LuaCallback {
 
     void operator()(int rc, const std::string& responce) { // request callback
         int top = lua_gettop(L);
+        push();
         push_rc_as_error(L, rc);
         lua_pushlstring(L, responce.data(), responce.size());
         if (lua_pcall(L, 2, 0, 0) != 0)
@@ -103,6 +106,7 @@ struct LuaCallback {
 
     void operator()(int rc) { // notify callback
         int top = lua_gettop(L);
+        push();
         push_rc_as_error(L, rc);
         if (lua_pcall(L, 1, 0, 0) != 0)
             traceback(L);
@@ -160,24 +164,41 @@ private:
 
 struct Signals {
     void add(std::string&& event, LuaCallback&& listener) {
+        std::lock_guard<std::mutex> lock(mutex);
         events[event].push_back(listener);
     }
     void remove(const std::string& event, const LuaCallback& listener) {
+        std::lock_guard<std::mutex> lock(mutex);
         auto iter = events.find(event);
         if (iter == events.end())
             return;
         auto listeners = iter->second;
         listeners.erase(std::remove(listeners.begin(), listeners.end(), listener));
     }
-    const std::vector<LuaCallback>& listeners(std::string&& event) {
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex);
+        events.clear();
+    }
+    std::vector<LuaCallback> listeners(std::string&& event) {
+        std::lock_guard<std::mutex> lock(mutex);
         return events[event];
     }
     void fire(const std::string& event, const std::vector<std::string>& args) {
-        auto iter = events.find(event);
-        if (iter == events.end())
-            return;
-        auto listeners = iter->second;
-        std::vector<LuaCallback> copy(listeners); // make a copy of listeners
+        
+        std::vector<LuaCallback> copy;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            auto iter = events.find(event);
+            if (iter == events.end())
+                return;
+            auto listeners = iter->second;
+            copy = listeners; // make a copy of listeners
+        }
+
+        std::cout << "fire: " << event << " to " << copy.size() << " listeners with args:" << std::endl;
+        for (const auto& a : args)
+            std::cout << a << std::endl;
+        
         for (auto& h : copy) {
             h(args);
             if (h.once())
@@ -191,6 +212,7 @@ struct Signals {
     void operator=(const Signals&) = delete;
 private:
     std::unordered_map< std::string, std::vector<LuaCallback> > events;
+    std::mutex mutex;
 };
 
 
@@ -281,7 +303,7 @@ static int pomelo_init(lua_State* L)
     if (instance != nullptr) {
         luaL_error(L, "pomelo.init() already called.");
     }
-    
+
     int log_level = PC_LOG_DISABLE;
     const char* ca_file = NULL;
     const char* ca_path = NULL;
@@ -291,44 +313,44 @@ static int pomelo_init(lua_State* L)
         lua_getfield(L, idx, "log");
         log_level = luaL_checkoption(L, -1, "DISABLE", log_levels);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, idx, "cafile");
         ca_file = luaL_optstring(L, -1, NULL);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, idx, "capath");
         ca_path = luaL_optstring(L, -1, NULL);
         lua_pop(L, 1);
-        
-        
+
+
         lua_getfield(L, idx, "conn_timeout");
         config.conn_timeout = (int)luaL_optinteger(L, -1, config.conn_timeout);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, idx, "enable_reconn");
         config.enable_reconn = optbool(L, -1, config.enable_reconn);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, idx, "reconn_max_retry");
         config.reconn_max_retry = recon_retry_max(L, -1);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, -1, "reconn_delay");
         config.reconn_delay = (int)luaL_optinteger(L, -1, config.reconn_delay);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, -1, "reconn_delay_max");
         config.reconn_delay_max = (int)luaL_optinteger(L, -1, config.reconn_delay_max);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, -1, "reconn_exp_backoff");
         config.reconn_exp_backoff = optbool(L, -1, config.reconn_exp_backoff);
         lua_pop(L, 1);
-        
+
         lua_getfield(L, idx, "transport_name");
         config.transport_name = luaL_checkoption(L, -1, "TCP", transport_names);
         lua_pop(L, 1);
-        
+
 #if !defined(PC_NO_UV_TLS_TRANS)
         if (ca_file || ca_path) {
             tr_uv_tls_set_ca_file(ca_file, ca_path);
@@ -337,12 +359,12 @@ static int pomelo_init(lua_State* L)
     }
 
     pc_lib_set_default_log_level(log_level);
-    
+
     instance = (pc_client_t*)malloc(pc_client_size());
     if (!instance)
         luaL_error(L, "error while create client instance: out of memory");
     pc_client_init(instance, nullptr, &config);
-    pc_client_add_ev_handler(instance, lua_event_cb, L, nullptr);
+    pc_client_add_ev_handler(instance, lua_event_cb, nullptr, nullptr);
 
     return 0;
 }
@@ -395,8 +417,7 @@ static const struct arg_info_t ev_arg_info[PC_EV_COUNT] = {
 
 class EventAction : public Action {
 public:
-    EventAction(int ev_type, lua_State* vm, const char* arg1, const char* arg2)
-    : L(vm)
+    EventAction(int ev_type, const char* arg1, const char* arg2)
     {
         const char* args[] = { arg1, arg2 };
         const struct arg_info_t& info = ev_arg_info[ev_type];
@@ -406,12 +427,10 @@ public:
         }
     }
     virtual void operator()() override {
-        lua_checkstack(L, 4);
         events.fire(event_, args_);
     }
 
 private:
-    lua_State* L;
     std::string event_;
     std::vector<std::string> args_;
 };
@@ -433,9 +452,8 @@ static void lua_event_cb(pc_client_t *client, int ev_type, void* ex_data, const 
 {
     if (ev_type < 0 || ev_type >= PC_EV_COUNT)
         return;
-    lua_State* lvm = reinterpret_cast<lua_State*>(ex_data);
     std::lock_guard<std::mutex> lock(async_mutex);
-    async_events.push_back(new EventAction(ev_type, lvm, arg1, arg2));
+    async_events.push_back(new EventAction(ev_type, arg1, arg2));
 }
 
 
@@ -661,7 +679,7 @@ static int pomelo_listeners(lua_State* L)
 {
     size_t sz;
     const char* event = luaL_checklstring(L, 1, &sz);
-    const auto& listeners = events.listeners(std::string(event, sz));
+    auto listeners = events.listeners(std::string(event, sz));
 
     lua_createtable(L, listeners.size(), 0);        // [event, listeners]
     for (int i = 0; i < listeners.size(); ++i) {
@@ -671,14 +689,15 @@ static int pomelo_listeners(lua_State* L)
     return 1;
 }
 
+static int pomelo_removeAllListeners(lua_State* L)
+{
+    events.clear();
+    return 0;
+}
 
 
 static int pomelo_connect(lua_State* L)
 {
-    if (pc_client_state(instance) >= PC_ST_CONNECTING) {
-        pc_client_disconnect(instance);
-    }
-
     const char* host = luaL_checkstring(L, 1);
     int port = (int)luaL_checkinteger(L, 2);
     const char* handshake_opts = luaL_optstring(L, 3, NULL);
@@ -702,6 +721,7 @@ static const luaL_Reg lib[] = {
     {"off", pomelo_off},
     {"removeListener", pomelo_off}, // Alias for off
     {"listeners", pomelo_listeners},
+    {"removeAllListeners", pomelo_removeAllListeners},
 
     {"state", pomelo_state},
     {"conn_quality", pomelo_conn_quality},
