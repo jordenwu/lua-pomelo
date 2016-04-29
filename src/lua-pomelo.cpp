@@ -174,7 +174,6 @@ struct Signals {
             return;
         std::vector<LuaCallback>& listeners = iter->second;
         listeners.erase(std::remove(listeners.begin(), listeners.end(), listener));
-        printf("event is %s,left listeners is %d \r\n",event.c_str(), listeners.size());
     }
     void clear() {
         std::lock_guard<std::mutex> lock(mutex);
@@ -598,12 +597,12 @@ private:
                 break;
             case 4:
                 callback = createLuaCallback(L, 4, 0);
-                if (!callback)
-                    timeout = luaL_checkinteger(L, 4);
+                //if (!callback)
+                timeout = luaL_checkinteger(L, 3);
                 break;
             case 5:
                 timeout = luaL_checkinteger(L, 4);
-                callback = createLuaCallback(L, 5, 1);
+                callback = createLuaCallback(L, 5, true);
                 break;
             default:
                 break;
