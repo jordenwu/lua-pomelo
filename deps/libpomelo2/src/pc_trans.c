@@ -11,60 +11,6 @@
 #include "pc_lib.h"
 #include "pc_pomelo_i.h"
 
-struct state_trans_s {
-    char allowed[PC_ST_COUNT];
-    int narg;
-    int to;
-};
-
-
-#define UNCHANGE_STATE    PC_ST_COUNT
-
-static const struct state_trans_s fsm[PC_EV_COUNT] = {
-    {{0, 0, 0, 1, 1, 0}, 1, UNCHANGE_STATE}, // PC_EV_USER_DEFINED_PUSH
-    {{0, 0, 1, 0, 0, 0}, 0, PC_ST_CONNECTED}, // PC_EV_CONNECTED 1
-    {{0, 0, 1, 0, 1, 0}, 1, UNCHANGE_STATE}, // PC_EV_CONNECT_ERROR 2
-    {{0, 0, 1, 0, 1, 0}, 1, PC_ST_INITED}, // PC_EV_CONNECT_FAILED 3
-    {{0, 0, 0, 0, 1, 0}, 0, PC_ST_INITED}, // PC_EV_DISCONNECT 4
-    {{0, 0, 0, 1, 1, 0}, 0, PC_ST_INITED}, // PC_EV_KICKED_BY_SERVER 5
-    {{0, 0, 1, 1, 1, 0}, 1, PC_ST_INITED}, // PC_EV_UNEXPECTED_DISCONNECT 6
-    {{0, 0, 1, 1, 1, 0}, 1, PC_ST_INITED}, // PC_EV_PROTO_ERROR 7
-};
-
-
-static int state_translate(pc_client_t* client, int ev_type, const char* arg1, const char* arg2)
-{
-    int from;
-    if (ev_type >= PC_EV_COUNT || ev_type < 0) {
-        pc_lib_log(PC_LOG_ERROR, "state_translate - error event type");
-        return 0;
-    }
-
-    pc_mutex_lock(&client->state_mutex);
-    from = client->state;
-
-#define RETURN_IF(cond, ...) if (cond) { \
-        pc_mutex_unlock(&client->state_mutex); \
-        pc_lib_log(PC_LOG_ERROR, "state_translate - " __VA_ARGS__); \
-        return 0; \
-    }
-
-    RETURN_IF(from >= PC_ST_COUNT || from < 0, "error client state: %s", pc_client_state_str(from));
-    RETURN_IF(!fsm[ev_type].allowed[from], "client in %s not allow fires %s", pc_client_state_str(from), pc_client_ev_str(ev_type));
-    switch (fsm[ev_type].narg) {
-        case 2:
-            RETURN_IF(arg2 == NULL, "to fire %s requires arg2 != NULL", pc_client_ev_str(ev_type)); // fall through
-        case 1:
-            RETURN_IF(arg1 == NULL, "to fire %s requires arg1 != NULL", pc_client_ev_str(ev_type)); // fall through
-    }
-#undef RETURN_IF
-
-    if (fsm[ev_type].to != UNCHANGE_STATE) {
-        client->state = fsm[ev_type].to;
-    }
-    pc_mutex_unlock(&client->state_mutex);
-    return 1;
-}
 
 static void pc__trans_queue_event(pc_client_t* client, int ev_type, const char* arg1, const char* arg2);
 
@@ -75,8 +21,65 @@ void pc_trans_fire_event(pc_client_t* client, int ev_type, const char* arg1, con
         return ;
     }
 
-    if (!state_translate(client, ev_type, arg1, arg2))
+    if (ev_type >= PC_EV_COUNT || ev_type < 0) {
+        pc_lib_log(PC_LOG_ERROR, "pc__transport_fire_event - error event type");
         return;
+    }
+
+    if (ev_type == PC_EV_USER_DEFINED_PUSH && (!arg1 || !arg2)) {
+        pc_lib_log(PC_LOG_ERROR, "pc__transport_fire_event - push msg but without a route or msg");
+        return;
+    }
+
+    if (ev_type == PC_EV_CONNECT_ERROR || ev_type == PC_EV_UNEXPECTED_DISCONNECT
+        || ev_type == PC_EV_PROTO_ERROR || ev_type == PC_EV_CONNECT_FAILED) {
+        if (!arg1) {
+            pc_lib_log(PC_LOG_ERROR, "pc__transport_fire_event - event should be with a reason description");
+            return ;
+        }
+    }
+
+    pc_mutex_lock(&client->state_mutex);
+    switch(ev_type) {
+        case PC_EV_CONNECTED:
+            assert(client->state == PC_ST_CONNECTING);
+            client->state = PC_ST_CONNECTED;
+            break;
+
+        case PC_EV_CONNECT_ERROR:
+            assert(client->state == PC_ST_CONNECTING || client->state == PC_ST_DISCONNECTING);
+            break;
+
+        case PC_EV_CONNECT_FAILED:
+            assert(client->state == PC_ST_CONNECTING || client->state == PC_ST_DISCONNECTING);
+            client->state = PC_ST_INITED;
+            break;
+
+        case PC_EV_DISCONNECT:
+            assert(client->state == PC_ST_DISCONNECTING);
+            client->state = PC_ST_INITED;
+            break;
+
+        case PC_EV_KICKED_BY_SERVER:
+            assert(client->state == PC_ST_CONNECTED || client->state == PC_ST_DISCONNECTING);
+            client->state = PC_ST_INITED;
+            break;
+
+        case PC_EV_UNEXPECTED_DISCONNECT:
+        case PC_EV_PROTO_ERROR:
+            assert(client->state == PC_ST_CONNECTING || client->state == PC_ST_CONNECTED
+                    || client->state == PC_ST_DISCONNECTING);
+            client->state = PC_ST_CONNECTING;
+            break;
+        case PC_EV_USER_DEFINED_PUSH:
+            /* do nothing here */
+            break;
+
+        default:
+            /* never run to here */
+            pc_lib_log(PC_LOG_ERROR, "pc__trans_fire_event - unknown network event: %d", ev_type);
+    }
+    pc_mutex_unlock(&client->state_mutex);
 
     if (client->config.enable_polling)
         pc__trans_queue_event(client, ev_type, arg1, arg2);
@@ -86,51 +89,51 @@ void pc_trans_fire_event(pc_client_t* client, int ev_type, const char* arg1, con
 
 void pc__trans_queue_event(pc_client_t* client, int ev_type, const char* arg1, const char* arg2)
 {
+
     pc_event_t* ev;
     int i;
 
-    // follow code has extra indent for better git diff in pull request.
-        assert(client->config.enable_polling);
+    assert(client->config.enable_polling);
 
-        pc_lib_log(PC_LOG_INFO, "pc__trans_fire_event - add pending event: %s", pc_client_ev_str(ev_type));
-        pc_mutex_lock(&client->event_mutex);
+    pc_lib_log(PC_LOG_INFO, "pc__trans_queue_event - add pending event: %s", pc_client_ev_str(ev_type));
+    pc_mutex_lock(&client->event_mutex);
 
-        ev = NULL;
-        for (i = 0; i < PC_PRE_ALLOC_EVENT_SLOT_COUNT; ++i) {
-            if (PC_PRE_ALLOC_IS_IDLE(client->pending_events[i].type)) {
-                ev = &client->pending_events[i];
-                PC_PRE_ALLOC_SET_BUSY(ev->type);
-                break;
-            }
+    ev = NULL;
+    for (i = 0; i < PC_PRE_ALLOC_EVENT_SLOT_COUNT; ++i) {
+        if (PC_PRE_ALLOC_IS_IDLE(client->pending_events[i].type)) {
+            ev = &client->pending_events[i];
+            PC_PRE_ALLOC_SET_BUSY(ev->type);
+            break;
         }
+    }
 
-        if (!ev) {
-            ev = (pc_event_t* )pc_lib_malloc(sizeof(pc_event_t));
-            memset(ev, 0, sizeof(pc_event_t));
+    if (!ev) {
+        ev = (pc_event_t* )pc_lib_malloc(sizeof(pc_event_t));
+        memset(ev, 0, sizeof(pc_event_t));
 
-            ev->type = PC_DYN_ALLOC;
-        }
+        ev->type = PC_DYN_ALLOC;
+    }
 
-        PC_EV_SET_NET_EVENT(ev->type);
+    PC_EV_SET_NET_EVENT(ev->type);
 
-        QUEUE_INIT(&ev->queue);
-        QUEUE_INSERT_TAIL(&client->pending_ev_queue, &ev->queue);
+    QUEUE_INIT(&ev->queue);
+    QUEUE_INSERT_TAIL(&client->pending_ev_queue, &ev->queue);
 
-        ev->data.ev.ev_type = ev_type;
+    ev->data.ev.ev_type = ev_type;
 
-        if (arg1) {
-            ev->data.ev.arg1 = pc_lib_strdup(arg1);
-        } else {
-            ev->data.ev.arg1 = NULL;
-        }
+    if (arg1) {
+        ev->data.ev.arg1 = pc_lib_strdup(arg1);
+    } else {
+        ev->data.ev.arg1 = NULL;
+    }
 
-        if (arg2) {
-            ev->data.ev.arg2 = pc_lib_strdup(arg2);
-        } else {
-            ev->data.ev.arg2 = NULL;
-        }
+    if (arg2) {
+        ev->data.ev.arg2 = pc_lib_strdup(arg2);
+    } else {
+        ev->data.ev.arg2 = NULL;
+    }
 
-        pc_mutex_unlock(&client->event_mutex);
+    pc_mutex_unlock(&client->event_mutex);
 }
 
 void pc__trans_fire_event(pc_client_t* client, int ev_type, const char* arg1, const char* arg2)
@@ -171,36 +174,35 @@ void pc__trans_queue_sent(pc_client_t* client, unsigned int seq_num, int rc)
     pc_event_t* ev;
     int i;
 
-    // follow code has extra indent for better git diff in pull request.
-        pc_mutex_lock(&client->event_mutex);
+    pc_mutex_lock(&client->event_mutex);
 
-        pc_lib_log(PC_LOG_INFO, "pc__trans_sent - add pending sent event, seq_num: %u, rc: %s",
-                seq_num, pc_client_rc_str(rc));
+    pc_lib_log(PC_LOG_INFO, "pc__trans_queue_sent - add pending sent event, seq_num: %u, rc: %s",
+            seq_num, pc_client_rc_str(rc));
 
-        ev = NULL;
-        for (i = 0; i < PC_PRE_ALLOC_EVENT_SLOT_COUNT; ++i) {
-            if (PC_PRE_ALLOC_IS_IDLE(client->pending_events[i].type)) {
-                ev = &client->pending_events[i];
-                PC_PRE_ALLOC_SET_BUSY(ev->type);
-                break;
-            }
+    ev = NULL;
+    for (i = 0; i < PC_PRE_ALLOC_EVENT_SLOT_COUNT; ++i) {
+        if (PC_PRE_ALLOC_IS_IDLE(client->pending_events[i].type)) {
+            ev = &client->pending_events[i];
+            PC_PRE_ALLOC_SET_BUSY(ev->type);
+            break;
         }
+    }
 
-        if (!ev) {
-            ev = (pc_event_t* )pc_lib_malloc(sizeof(pc_event_t));
-            memset(ev, 0, sizeof(pc_event_t));
-            ev->type = PC_DYN_ALLOC;
-        }
+    if (!ev) {
+        ev = (pc_event_t* )pc_lib_malloc(sizeof(pc_event_t));
+        memset(ev, 0, sizeof(pc_event_t));
+        ev->type = PC_DYN_ALLOC;
+    }
 
-        QUEUE_INIT(&ev->queue);
+    QUEUE_INIT(&ev->queue);
 
-        PC_EV_SET_NOTIFY_SENT(ev->type);
-        ev->data.notify.seq_num = seq_num;
-        ev->data.notify.rc = rc;
+    PC_EV_SET_NOTIFY_SENT(ev->type);
+    ev->data.notify.seq_num = seq_num;
+    ev->data.notify.rc = rc;
 
-        QUEUE_INSERT_TAIL(&client->pending_ev_queue, &ev->queue);
+    QUEUE_INSERT_TAIL(&client->pending_ev_queue, &ev->queue);
 
-        pc_mutex_unlock(&client->event_mutex);
+    pc_mutex_unlock(&client->event_mutex);
 }
 
 void pc__trans_sent(pc_client_t* client, unsigned int seq_num, int rc)
@@ -272,37 +274,36 @@ void pc__trans_queue_resp(pc_client_t* client, unsigned int req_id, int rc, cons
     pc_event_t* ev;
     int i;
 
-    // follow code has extra indent for better git diff in pull request.
-        pc_mutex_lock(&client->event_mutex);
+    pc_mutex_lock(&client->event_mutex);
 
-        pc_lib_log(PC_LOG_INFO, "pc__trans_resp - add pending resp event, req_id: %u, rc: %s",
-                req_id, pc_client_rc_str(rc));
-        ev = NULL;
-        for (i = 0; i < PC_PRE_ALLOC_EVENT_SLOT_COUNT; ++i) {
-            if (PC_PRE_ALLOC_IS_IDLE(client->pending_events[i].type)) {
-                ev = &client->pending_events[i];
-                PC_PRE_ALLOC_SET_BUSY(ev->type);
-                break;
-            }
+    pc_lib_log(PC_LOG_INFO, "pc__trans_queue_resp - add pending resp event, req_id: %u, rc: %s",
+            req_id, pc_client_rc_str(rc));
+    ev = NULL;
+    for (i = 0; i < PC_PRE_ALLOC_EVENT_SLOT_COUNT; ++i) {
+        if (PC_PRE_ALLOC_IS_IDLE(client->pending_events[i].type)) {
+            ev = &client->pending_events[i];
+            PC_PRE_ALLOC_SET_BUSY(ev->type);
+            break;
         }
+    }
 
-        if (!ev) {
-            ev = (pc_event_t* )pc_lib_malloc(sizeof(pc_event_t));
-            memset(ev, 0, sizeof(pc_event_t));
+    if (!ev) {
+        ev = (pc_event_t* )pc_lib_malloc(sizeof(pc_event_t));
+        memset(ev, 0, sizeof(pc_event_t));
 
-            ev->type = PC_DYN_ALLOC;
-        }
+        ev->type = PC_DYN_ALLOC;
+    }
 
-        PC_EV_SET_RESP(ev->type);
+    PC_EV_SET_RESP(ev->type);
 
-        QUEUE_INIT(&ev->queue);
-        ev->data.req.req_id = req_id;
-        ev->data.req.rc = rc;
-        ev->data.req.resp = pc_lib_strdup(resp);
+    QUEUE_INIT(&ev->queue);
+    ev->data.req.req_id = req_id;
+    ev->data.req.rc = rc;
+    ev->data.req.resp = pc_lib_strdup(resp);
 
-        QUEUE_INSERT_TAIL(&client->pending_ev_queue, &ev->queue);
+    QUEUE_INSERT_TAIL(&client->pending_ev_queue, &ev->queue);
 
-        pc_mutex_unlock(&client->event_mutex);
+    pc_mutex_unlock(&client->event_mutex);
 }
 
 void pc__trans_resp(pc_client_t* client, unsigned int req_id, int rc, const char* resp)
