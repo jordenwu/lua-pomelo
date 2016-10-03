@@ -4,7 +4,7 @@ version = '0.1.0-1'
 local v = version:gsub('%-%d', '')
 
 source = {
-  url = 'git://github.com/xpol/lua-pomelo.git',
+  url = 'git://github.com/reasonMix/lua-pomelo.git',
   tag = 'v'..v
 }
 description={
@@ -18,7 +18,7 @@ And the later is a fast, scalable, distributed game server framework for Node.js
 [1]: https://github.com/NetEase/libpomelo2
 [2]: https://github.com/NetEase/pomelo
 ]],
-   homepage = 'http://github.com/xpol/lua-pomelo',
+   homepage = 'https://github.com/reasonMix/lua-pomelo',
    license = 'MIT'
 }
 dependencies = { 'lua >= 5.1' }
