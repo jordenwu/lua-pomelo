@@ -52,6 +52,9 @@ find_package(LibUV)
 find_package(OpenSSL)
 
 include_directories(${LUA_INCLUDE_DIR} ${LIBPOMELO2_DIR}/include ${LIBPOMELO2_DIR}/src ${LIBUV_INCLUDE_DIR})
+if (OPENSSL_FOUND)
+  include_directories(${OPENSSL_INCLUDE_DIR})
+endif()
 
 list(APPEND SOURCES
   src/lua-pomelo.cpp
