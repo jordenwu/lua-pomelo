@@ -122,8 +122,11 @@ private:
     bool once_;
 
 
-    void unref() const {
-        if (L) luaL_unref(L, LUA_REGISTRYINDEX, ref_);
+    void unref() {
+        if (L && ref_ != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, ref_);
+            ref_ = LUA_NOREF;
+        }
     }
     void reset(lua_State* aL, int index, bool once = false)
     {
@@ -173,7 +176,9 @@ struct Signals {
         if (iter == events.end())
             return;
         std::vector<LuaCallback>& listeners = iter->second;
-        listeners.erase(std::remove(listeners.begin(), listeners.end(), listener));
+        auto it = std::find(listeners.begin(), listeners.end(), listener);
+        if (it != listeners.cend())
+            listeners.erase(it);
     }
     void clear() {
         std::lock_guard<std::mutex> lock(mutex);
@@ -301,7 +306,8 @@ static int recon_retry_max(lua_State* L, int idx) {
 static int pomelo_init(lua_State* L)
 {
     if (instance != nullptr) {
-        luaL_error(L, "pomelo.init() already called.");
+        // luaL_error(L, "pomelo.init() already called.");
+        return 0;
     }
 
     int log_level = PC_LOG_DISABLE;
